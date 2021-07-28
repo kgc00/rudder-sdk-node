@@ -31,6 +31,7 @@ class Analytics {
    *   @property {Number} flushInterval (default: 10000)
    *   @property {String} host (default: required)
    *   @property {Boolean} enable (default: true)
+   *   @property {Boolean} disableLogging (default: false)
    */
 
   constructor(writeKey, dataPlaneURL, options) {
@@ -52,6 +53,7 @@ class Analytics {
     this.flushInterval = options.flushInterval || 20000;
     this.maxInternalQueueSize = options.maxInternalQueueSize || 20000;
     this.logLevel = options.logLevel || "info";
+    this.disableLogging = options.disableLogging || false;
     this.flushed = false;
     Object.defineProperty(this, "enable", {
       configurable: false,
@@ -67,8 +69,10 @@ class Analytics {
         winston.format.timestamp(),
         logFormat
       ),
-      transports: [new winston.transports.Console()]
+      transports: [new winston.transports.Console()],
+      silent: this.disableLogging
     });
+    this.consoleLog = this.disableLogging ? noop : console.log;
 
     axiosRetry(axios, { retries: 0 });
   }
@@ -86,19 +90,19 @@ class Analytics {
 
     this.pQueue.on("failed", function(job, error) {
       let jobData = eval("(" + job.data.eventData + ")");
-      console.log("job : " + jobData.description + " " + error);
+      this.consoleLog("job : " + jobData.description + " " + error);
     });
 
     // tapping on queue events
     this.pQueue.on("completed", function(job, result) {
       let jobData = eval("(" + job.data.eventData + ")");
       result = result || "completed";
-      console.log("job : " + jobData.description + " " + result);
+      this.consoleLog("job : " + jobData.description + " " + result);
     });
 
     this.pQueue.on("stalled", function(job) {
       let jobData = eval("(" + job.data.eventData + ")");
-      console.log("job : " + jobData.description + " is stalled...");
+      this.consoleLog("job : " + jobData.description + " is stalled...");
     });
 
     this.pQueue.process(function(job, done) {
@@ -152,7 +156,7 @@ class Analytics {
                     );
                   })
                   .catch(error => {
-                    console.log("failed to requeue job " + jobData.description);
+                    this.consoleLog("failed to requeue job " + jobData.description);
                     rdone(jobData.callbacks, error);
                     done(error);
                   });
@@ -191,7 +195,7 @@ class Analytics {
    */
   createPersistenceQueue(queueOpts, callback) {
     if (this.pQueueInitialized) {
-      console.log("a persistent queue is already initialized, skipping...");
+      this.consoleLog("a persistent queue is already initialized, skipping...");
       return;
     }
 
@@ -209,7 +213,7 @@ class Analytics {
       prefix: "{" + this.pQueueOpts.prefix + "}" || "{rudder}"
     });
 
-    console.log("isMultiProcessor: " + this.pQueueOpts.isMultiProcessor);
+    this.consoleLog("isMultiProcessor: " + this.pQueueOpts.isMultiProcessor);
 
     this.pQueue
       .isReady()
@@ -225,11 +229,11 @@ class Analytics {
           this.pQueue
             .getActive()
             .then(jobs => {
-              console.log("success geting active jobs");
+              this.consoleLog("success geting active jobs");
               if (jobs.length == 0) {
-                console.log("there are no active jobs while starting up queue");
+                this.consoleLog("there are no active jobs while starting up queue");
                 this.addPersistentQueueProcessor();
-                console.log("success adding process");
+                this.consoleLog("success adding process");
                 this.pQueueInitialized = true;
                 callback();
               } else {
@@ -237,7 +241,7 @@ class Analytics {
                 // moving active job is important as this job doesn't have a process function
                 // and will later be retried which will mess event ordering
                 if (jobs.length > 1) {
-                  console.log(
+                  this.consoleLog(
                     "number of active jobs at starting up queue > 1 "
                   );
                   callback(
@@ -247,43 +251,43 @@ class Analytics {
                   );
                   return;
                 }
-                console.log(
+                this.consoleLog(
                   "number of active jobs at starting up queue = " + jobs.length
                 );
                 jobs.forEach(job => {
                   job
                     .remove()
                     .then(() => {
-                      console.log("success removed active job");
+                      this.consoleLog("success removed active job");
                       let jobData = eval("(" + job.data.eventData + ")");
                       jobData.attempts = 0;
                       this.pQueue
                         .add({ eventData: serialize(jobData) }, { lifo: true })
                         .then(removedJob => {
-                          console.log(
+                          this.consoleLog(
                             "success adding removed job back to queue"
                           );
                           this.addPersistentQueueProcessor();
-                          console.log("success adding process");
+                          this.consoleLog("success adding process");
                           this.pQueueInitialized = true;
                           callback();
                         });
                     })
                     .catch(error => {
-                      console.log("failed to remove active job");
+                      this.consoleLog("failed to remove active job");
                       callback(error);
                     });
                 });
               }
             })
             .catch(error => {
-              console.log("failed geting active jobs");
+              this.consoleLog("failed geting active jobs");
               callback(error);
             });
         }
       })
       .catch(error => {
-        console.log("queue not ready");
+        this.consoleLog("queue not ready");
         callback(error);
       });
   }
@@ -638,7 +642,7 @@ class Analytics {
       return false;
     }
 
-    console.log("error status: " + error.response.status);
+    this.consoleLog("error status: " + error.response.status);
     // Retry Server Errors (5xx).
     if (error.response.status >= 500 && error.response.status <= 599) {
       return true;
